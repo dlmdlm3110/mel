@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>メルカリ出品用 写真加工アプリ (高機能版 V6)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- JSZipライブラリを追加 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'Helvetica Neue', 'Arial', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Meiryo', sans-serif;
+        }
+        .thumbnail-strip {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            overflow-x: auto;
+            background-color: #f9fafb;
+            border-radius: 0.5rem;
+        }
+        .thumbnail-item {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            flex-shrink: 0;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .thumbnail-item.active {
+            border-color: #4f46e5;
+        }
+        .thumbnail-item.selected {
+            box-shadow: 0 0 0 3px #10b981;
+        }
+        .thumbnail-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .selection-checkbox {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 20px;
+            height: 20px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border: 1px solid #ccc;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 5;
+        }
+        .selection-checkbox .fa-check {
+            display: none;
+            color: #10b981;
+            font-size: 12px;
+        }
+        .thumbnail-item.selected .selection-checkbox .fa-check {
+            display: block;
+        }
+        .editor-area {
+            position: relative;
+            width: 100%;
+            background-color: #e5e7eb;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            aspect-ratio: 1 / 1;
+        }
+        .editor-area img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .draggable-text {
+            position: absolute;
+            cursor: move;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            text-align: center;
+            white-space: pre-wrap;
+            user-select: none;
+            line-height: 1.2;
+            transition: transform 0.1s;
+        }
+        .loader {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .history-container {
+            position: absolute;
+            z-index: 10;
+            width: 100%;
+            max-height: 150px;
+            overflow-y: auto;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .history-item {
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+        }
+        .history-item:hover {
+            background-color: #f3f4f6;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div class="flex flex-col lg:flex-row w-full min-h-screen">
+        
+        <!-- 左側: コントロールパネル -->
+        <div class="w-full lg:w-1/3 xl:w-1/4 bg-white p-6 shadow-lg flex flex-col">
+            <header class="text-center mb-6">
+                <h1 class="text-2xl font-bold text-gray-800">メルカリ出品写真加アプリ</h1>
+                <p class="text-gray-500 mt-1">写真ごとに設定を編集できます</p>
+            </header>
+
+            <div id="controls" class="space-y-5 flex-grow hidden">
+                <div class="relative">
+                    <label for="brandName" class="block text-sm font-medium text-gray-700 mb-1">商品名 (ブランド名)</label>
+                    <textarea id="brandName" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" placeholder="例: DUNHILL&#10;改行もできます"></textarea>
+                    <div id="brandNameHistoryContainer" class="history-container hidden"></div>
+                </div>
+                <div>
+                    <label for="brandNameScale" class="block text-sm font-medium text-gray-700 mb-1">商品名のサイズ: <span id="brandNameScaleValue">100</span>%</label>
+                    <input type="range" id="brandNameScale" min="50" max="200" value="100" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+                <div>
+                    <label for="size" class="block text-sm font-medium text-gray-700 mb-1">サイズ</label>
+                    <select id="size" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                        <option>M</option><option>S</option><option>L</option><option>LL</option><option>XL</option><option>XXL</option><option>LLL</option><option>Free</option>
+                    </select>
+                </div>
+                 <div>
+                    <label for="sizeScale" class="block text-sm font-medium text-gray-700 mb-1">サイズの文字サイズ: <span id="sizeScaleValue">100</span>%</label>
+                    <input type="range" id="sizeScale" min="50" max="200" value="100" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">文字の色</label>
+                    <div class="flex items-center space-x-4">
+                        <label class="flex items-center"><input type="radio" name="textColor" value="white" class="form-radio h-4 w-4 text-indigo-600" checked> <span class="ml-2 text-gray-700">白</span></label>
+                        <label class="flex items-center"><input type="radio" name="textColor" value="black" class="form-radio h-4 w-4 text-indigo-600"> <span class="ml-2 text-gray-700">黒</span></label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-auto pt-6 space-y-3">
+                 <div>
+                    <label for="imageUpload" class="w-full inline-flex justify-center items-center px-4 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer">
+                        <i class="fas fa-camera mr-2"></i> 写真を選択する
+                    </label>
+                    <input type="file" id="imageUpload" multiple accept="image/*" class="hidden">
+                </div>
+                <div id="selection-controls" class="hidden">
+                    <div class="flex space-x-2">
+                        <button id="selectAll" class="w-full text-sm py-2 px-3 border border-gray-300 rounded-md">すべて選択</button>
+                        <button id="deselectAll" class="w-full text-sm py-2 px-3 border border-gray-300 rounded-md">すべて解除</button>
+                    </div>
+                </div>
+                <button id="processAndSave" class="w-full inline-flex justify-center items-center px-4 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400">
+                    <i class="fas fa-file-archive mr-2"></i> 選択した画像をZIPで保存
+                </button>
+            </div>
+        </div>
+
+        <!-- 右側: エディターとプレビュー -->
+        <main class="w-full lg:w-2/3 xl:w-3/4 p-6 flex flex-col">
+            <div id="editor-wrapper" class="flex-grow flex items-center justify-center hidden">
+                 <div class="editor-area" id="editorArea">
+                    <img id="mainImage" src="" alt="編集中の画像">
+                    <div id="draggableBrandName" class="draggable-text" data-type="brand"></div>
+                    <div id="draggableSize" class="draggable-text" data-type="size"></div>
+                </div>
+            </div>
+            <div id="upload-placeholder" class="flex-grow flex flex-col items-center justify-center text-gray-400 border-2 border-dashed rounded-lg">
+                <i class="fas fa-cloud-upload-alt text-6xl mb-4"></i>
+                <p class="text-xl">ここに写真が表示されます</p>
+                <p>「写真を選択する」から始めましょう</p>
+            </div>
+            
+            <div id="thumbnail-container" class="w-full mt-6 hidden">
+                <div id="thumbnailStrip" class="thumbnail-strip"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ローディング/完了モーダル -->
+    <div id="statusModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg p-8 text-center shadow-xl">
+            <div id="loader" class="loader w-12 h-12 rounded-full border-4 border-gray-200 mx-auto mb-4"></div>
+            <i id="successIcon" class="fas fa-check-circle text-green-500 text-5xl hidden mb-4"></i>
+            <p id="statusText" class="text-lg font-medium text-gray-700"></p>
+        </div>
+    </div>
+
+    <script>
+    // --- DOM要素の取得 ---
+    const imageUpload = document.getElementById('imageUpload');
+    const processAndSaveButton = document.getElementById('processAndSave');
+    const controls = document.getElementById('controls');
+    const brandNameInput = document.getElementById('brandName');
+    const brandNameHistoryContainer = document.getElementById('brandNameHistoryContainer');
+    const brandNameScale = document.getElementById('brandNameScale');
+    const brandNameScaleValue = document.getElementById('brandNameScaleValue');
+    const sizeSelect = document.getElementById('size');
+    const sizeScale = document.getElementById('sizeScale');
+    const sizeScaleValue = document.getElementById('sizeScaleValue');
+    const textColorRadios = document.getElementsByName('textColor');
+    
+    const editorWrapper = document.getElementById('editor-wrapper');
+    const uploadPlaceholder = document.getElementById('upload-placeholder');
+    const editorArea = document.getElementById('editorArea');
+    const mainImage = document.getElementById('mainImage');
+    const draggableBrandName = document.getElementById('draggableBrandName');
+    const draggableSize = document.getElementById('draggableSize');
+    
+    const thumbnailContainer = document.getElementById('thumbnail-container');
+    const thumbnailStrip = document.getElementById('thumbnailStrip');
+    
+    const statusModal = document.getElementById('statusModal');
+    const selectionControls = document.getElementById('selection-controls');
+    const selectAllButton = document.getElementById('selectAll');
+    const deselectAllButton = document.getElementById('deselectAll');
+
+    // --- アプリケーションの状態管理 ---
+    let imageStates = [];
+    let activeImageId = null;
+
+    // --- イベントリスナー ---
+    document.addEventListener('DOMContentLoaded', loadBrandHistory);
+    imageUpload.addEventListener('change', handleImageUpload);
+    brandNameInput.addEventListener('input', () => updateActiveState('brandName'));
+    brandNameInput.addEventListener('focus', () => brandNameHistoryContainer.classList.remove('hidden'));
+    brandNameInput.addEventListener('blur', (e) => {
+        setTimeout(() => { brandNameHistoryContainer.classList.add('hidden'); }, 200);
+        saveBrandToHistory(e.target.value);
+    });
+    brandNameScale.addEventListener('input', () => {
+        brandNameScaleValue.textContent = brandNameScale.value;
+        updateActiveState('brandNameScale');
+    });
+    sizeSelect.addEventListener('change', () => updateActiveState('size'));
+    sizeScale.addEventListener('input', () => {
+        sizeScaleValue.textContent = sizeScale.value;
+        updateActiveState('sizeScale');
+    });
+    textColorRadios.forEach(radio => radio.addEventListener('change', () => updateActiveState('textColor')));
+    processAndSaveButton.addEventListener('click', processAndSaveSelectedAsZip);
+    selectAllButton.addEventListener('click', () => selectAll(true));
+    deselectAllButton.addEventListener('click', () => selectAll(false));
+
+    // --- ドラッグ＆ドロップ機能 ---
+    let isDragging = false, draggedElement = null, dragStartX, dragStartY, textStartX, textStartY;
+    [draggableBrandName, draggableSize].forEach(el => {
+        el.addEventListener('mousedown', startDrag);
+        el.addEventListener('touchstart', startDrag, { passive: false });
+    });
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('touchmove', drag, { passive: false });
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
+
+
+    // --- 関数定義 ---
+
+    function handleImageUpload(event) {
+        const files = event.target.files;
+        if (files.length === 0) return;
+
+        imageStates = Array.from(files).map((file, index) => ({
+            id: Date.now() + index,
+            file: file,
+            previewUrl: URL.createObjectURL(file),
+            brand: { text: '', position: { x: 0.5, y: 0.1 }, scale: 1.0 },
+            size: { text: 'M', position: { x: 0.5, y: 0.2 }, scale: 1.0 },
+            textColor: 'white',
+            isPristine: true,
+            selected: true, // 最初はすべて選択状態にする
+        }));
+
+        if (imageStates.length > 0) {
+            uploadPlaceholder.classList.add('hidden');
+            editorWrapper.classList.remove('hidden');
+            controls.classList.remove('hidden');
+            thumbnailContainer.classList.remove('hidden');
+            selectionControls.classList.remove('hidden');
+            processAndSaveButton.disabled = false;
+            
+            renderThumbnails();
+            setActiveImage(imageStates[0].id);
+        }
+    }
+
+    function renderThumbnails() {
+        thumbnailStrip.innerHTML = '';
+        imageStates.forEach(state => {
+            const thumb = document.createElement('div');
+            thumb.className = 'thumbnail-item';
+            thumb.dataset.id = state.id;
+            if (state.id === activeImageId) thumb.classList.add('active');
+            if (state.selected) thumb.classList.add('selected');
+            
+            const img = document.createElement('img');
+            img.src = state.previewUrl;
+            
+            const checkbox = document.createElement('div');
+            checkbox.className = 'selection-checkbox';
+            checkbox.innerHTML = '<i class="fas fa-check"></i>';
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleSelection(state.id);
+            });
+
+            thumb.appendChild(checkbox);
+            thumb.appendChild(img);
+            
+            thumb.addEventListener('click', () => setActiveImage(state.id));
+            thumbnailStrip.appendChild(thumb);
+        });
+    }
+
+    function toggleSelection(id) {
+        const state = imageStates.find(s => s.id === id);
+        if (state) {
+            state.selected = !state.selected;
+            renderThumbnails();
+        }
+    }
+
+    function selectAll(isSelected) {
+        imageStates.forEach(s => s.selected = isSelected);
+        renderThumbnails();
+    }
+
+    function setActiveImage(id) {
+        const previousState = imageStates.find(s => s.id === activeImageId);
+        activeImageId = id;
+        const activeState = imageStates.find(s => s.id === id);
+        if (!activeState) return;
+
+        if (activeState.isPristine && previousState) {
+            activeState.brand.position = { ...previousState.brand.position };
+            activeState.size.position = { ...previousState.size.position };
+            activeState.brand.scale = previousState.brand.scale;
+            activeState.size.scale = previousState.size.scale;
+            activeState.textColor = previousState.textColor;
+            activeState.size.text = previousState.size.text;
+        }
+
+        brandNameInput.value = activeState.brand.text;
+        brandNameScale.value = activeState.brand.scale * 100;
+        brandNameScaleValue.textContent = Math.round(activeState.brand.scale * 100);
+        sizeSelect.value = activeState.size.text;
+        sizeScale.value = activeState.size.scale * 100;
+        sizeScaleValue.textContent = Math.round(activeState.size.scale * 100);
+        document.querySelector(`input[name="textColor"][value="${activeState.textColor}"]`).checked = true;
+
+        mainImage.src = activeState.previewUrl;
+        mainImage.onload = updateAllTextOverlays;
+        renderThumbnails();
+    }
+
+    function updateActiveState(type) {
+        const activeState = imageStates.find(s => s.id === activeImageId);
+        if (!activeState) return;
+        activeState.isPristine = false;
+
+        switch(type) {
+            case 'brandName': activeState.brand.text = brandNameInput.value; break;
+            case 'brandNameScale': activeState.brand.scale = brandNameScale.value / 100; break;
+            case 'size': activeState.size.text = sizeSelect.value; break;
+            case 'sizeScale': activeState.size.scale = sizeScale.value / 100; break;
+            case 'textColor': activeState.textColor = document.querySelector('input[name="textColor"]:checked').value; break;
+        }
+        updateAllTextOverlays();
+    }
+    
+    function updateAllTextOverlays() {
+        const activeState = imageStates.find(s => s.id === activeImageId);
+        if (!activeState) return;
+        updateTextOverlay(draggableBrandName, activeState.brand, activeState.textColor);
+        updateTextOverlay(draggableSize, activeState.size, activeState.textColor);
+    }
+
+    function updateTextOverlay(element, textState, textColor) {
+        if (!mainImage.naturalWidth) return;
+        const editorRect = editorArea.getBoundingClientRect();
+        const scale = Math.min(editorRect.width / mainImage.naturalWidth, editorRect.height / mainImage.naturalHeight);
+        const displayWidth = mainImage.naturalWidth * scale, displayHeight = mainImage.naturalHeight * scale;
+        const offsetX = (editorRect.width - displayWidth) / 2, offsetY = (editorRect.height - displayHeight) / 2;
+
+        element.textContent = textState.text;
+        element.style.color = textColor;
+        element.style.backgroundColor = textColor === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
+        const baseFontSize = Math.max(12, displayWidth / 25);
+        element.style.fontSize = `${baseFontSize * textState.scale}px`;
+        element.style.left = `${offsetX + textState.position.x * displayWidth - element.offsetWidth / 2}px`;
+        element.style.top = `${offsetY + textState.position.y * displayHeight - element.offsetHeight / 2}px`;
+    }
+
+    function startDrag(e) {
+        e.preventDefault(); isDragging = true; draggedElement = e.currentTarget;
+        const event = e.touches ? e.touches[0] : e;
+        dragStartX = event.clientX; dragStartY = event.clientY;
+        textStartX = draggedElement.offsetLeft; textStartY = draggedElement.offsetTop;
+    }
+
+    function drag(e) {
+        if (!isDragging) return;
+        const event = e.touches ? e.touches[0] : e;
+        const dx = event.clientX - dragStartX, dy = event.clientY - dragStartY;
+        draggedElement.style.left = `${textStartX + dx}px`; draggedElement.style.top = `${textStartY + dy}px`;
+    }
+
+    function endDrag() {
+        if (!isDragging || !draggedElement) return;
+        isDragging = false;
+        const activeState = imageStates.find(s => s.id === activeImageId), type = draggedElement.dataset.type;
+        if (!activeState || !type) return;
+        activeState.isPristine = false;
+        const editorRect = editorArea.getBoundingClientRect();
+        const scale = Math.min(editorRect.width / mainImage.naturalWidth, editorRect.height / mainImage.naturalHeight);
+        const displayWidth = mainImage.naturalWidth * scale, displayHeight = mainImage.naturalHeight * scale;
+        const offsetX = (editorRect.width - displayWidth) / 2, offsetY = (editorRect.height - displayHeight) / 2;
+        const newX = (draggedElement.offsetLeft + draggedElement.offsetWidth / 2 - offsetX) / displayWidth;
+        const newY = (draggedElement.offsetTop + draggedElement.offsetHeight / 2 - offsetY) / displayHeight;
+        activeState[type].position.x = Math.max(0, Math.min(1, newX));
+        activeState[type].position.y = Math.max(0, Math.min(1, newY));
+        draggedElement = null; updateAllTextOverlays();
+    }
+
+    async function processAndSaveSelectedAsZip() {
+        const selectedImages = imageStates.filter(s => s.selected);
+        if (selectedImages.length === 0) {
+            alert('保存する写真を選択してください。');
+            return;
+        }
+        showStatusModal(`ZIPファイル作成中... (0/${selectedImages.length})`);
+        const zip = new JSZip();
+        for (let i = 0; i < selectedImages.length; i++) {
+            const state = selectedImages[i];
+            document.getElementById('statusText').textContent = `画像処理中... (${i + 1}/${selectedImages.length})`;
+            const blob = await processImageToBlob(state);
+            zip.file(`processed_${i + 1}_${state.file.name}`, blob);
+        }
+        document.getElementById('statusText').textContent = 'ZIPファイルを生成中...';
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(zipBlob);
+        link.download = `processed_images_${Date.now()}.zip`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        showCompletionModal(`${selectedImages.length}枚の写真をZIPに保存しました。`);
+    }
+
+    function processImageToBlob(state) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                drawTextOnCanvas(ctx, state.brand, state.textColor, canvas.width);
+                drawTextOnCanvas(ctx, state.size, state.textColor, canvas.width);
+                canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
+            };
+            img.onerror = reject;
+            img.src = state.previewUrl;
+        });
+    }
+
+    function drawTextOnCanvas(ctx, textState, textColor, canvasWidth) {
+        const baseFontSize = Math.max(30, Math.round(canvasWidth / 25));
+        const fontSize = baseFontSize * textState.scale;
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const textLines = textState.text.split('\n');
+        const lineHeight = fontSize * 1.2;
+        const textX = textState.position.x * ctx.canvas.width;
+        const textY = textState.position.y * ctx.canvas.height;
+        const textMetrics = textLines.map(line => ctx.measureText(line));
+        const bgWidth = Math.max(...textMetrics.map(m => m.width)) + fontSize;
+        const bgHeight = (lineHeight * textLines.length) + (fontSize * 0.5);
+        ctx.fillStyle = textColor === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
+        ctx.fillRect(textX - bgWidth / 2, textY - bgHeight / 2, bgWidth, bgHeight);
+        ctx.fillStyle = textColor;
+        textLines.forEach((line, i) => {
+            const lineY = textY - (bgHeight/2) + (lineHeight * i) + (lineHeight/2) + (fontSize * 0.1);
+            ctx.fillText(line, textX, lineY);
+        });
+    }
+
+    const BRAND_HISTORY_KEY = 'brandNameHistory';
+    function loadBrandHistory() {
+        const history = JSON.parse(localStorage.getItem(BRAND_HISTORY_KEY) || '[]');
+        brandNameHistoryContainer.innerHTML = '';
+        history.forEach(name => {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            item.textContent = name;
+            item.addEventListener('mousedown', (e) => {
+                e.preventDefault(); brandNameInput.value = name;
+                updateActiveState('brandName');
+                brandNameHistoryContainer.classList.add('hidden');
+            });
+            brandNameHistoryContainer.appendChild(item);
+        });
+    }
+
+    function saveBrandToHistory(name) {
+        if (!name || name.trim() === '') return;
+        const trimmedName = name.trim();
+        let history = JSON.parse(localStorage.getItem(BRAND_HISTORY_KEY) || '[]');
+        history = history.filter(item => item !== trimmedName);
+        history.unshift(trimmedName);
+        history = history.slice(0, 20);
+        localStorage.setItem(BRAND_HISTORY_KEY, JSON.stringify(history));
+        loadBrandHistory();
+    }
+
+    function showStatusModal(message) {
+        document.getElementById('statusText').textContent = message;
+        document.getElementById('loader').classList.remove('hidden');
+        document.getElementById('successIcon').classList.add('hidden');
+        statusModal.classList.remove('hidden');
+    }
+
+    function showCompletionModal(message) {
+        document.getElementById('statusText').textContent = message;
+        document.getElementById('loader').classList.add('hidden');
+        document.getElementById('successIcon').classList.remove('hidden');
+        setTimeout(() => { statusModal.classList.add('hidden'); }, 2000);
+    }
+    
+    window.addEventListener('resize', updateAllTextOverlays);
+    </script>
+</body>
+</html>
